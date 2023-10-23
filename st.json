@@ -1,0 +1,151 @@
+{
+  "__name__": "NetList",
+  "commands": [],
+  "components": [
+    {
+      "__name__": "ComponentInstance",
+      "clazz": {
+        "__name__": "ComponentClass",
+        "name": "vs",
+        "ports": [
+          "begin",
+          "end"
+        ],
+        "prefix": "v"
+      },
+      "model": {
+        "__name__": "ComponentModel",
+        "name": "const",
+        "params": {
+          "value": 5.0
+        }
+      },
+      "name": "V1",
+      "port_mapping": [
+        "1",
+        "0"
+      ]
+    },
+    {
+      "__name__": "ComponentInstance",
+      "clazz": {
+        "__name__": "ComponentClass",
+        "name": "r",
+        "ports": [
+          "pos",
+          "neg"
+        ],
+        "prefix": "r"
+      },
+      "model": {
+        "__name__": "ComponentModel",
+        "name": "const",
+        "params": {
+          "value": 30.0
+        }
+      },
+      "name": "R1",
+      "port_mapping": [
+        "1",
+        "2"
+      ]
+    },
+    {
+      "__name__": "ComponentInstance",
+      "clazz": {
+        "__name__": "ComponentClass",
+        "name": "r",
+        "ports": [
+          "pos",
+          "neg"
+        ],
+        "prefix": "r"
+      },
+      "model": {
+        "__name__": "ComponentModel",
+        "name": "const",
+        "params": {
+          "value": 100.0
+        }
+      },
+      "name": "R2",
+      "port_mapping": [
+        "2",
+        "0"
+      ]
+    },
+    {
+      "__name__": "ComponentInstance",
+      "clazz": {
+        "__name__": "ComponentClass",
+        "name": "r",
+        "ports": [
+          "pos",
+          "neg"
+        ],
+        "prefix": "r"
+      },
+      "model": {
+        "__name__": "ComponentModel",
+        "name": "const",
+        "params": {
+          "value": 300.0
+        }
+      },
+      "name": "R3",
+      "port_mapping": [
+        "1",
+        "3"
+      ]
+    },
+    {
+      "__name__": "ComponentInstance",
+      "clazz": {
+        "__name__": "ComponentClass",
+        "name": "r",
+        "ports": [
+          "pos",
+          "neg"
+        ],
+        "prefix": "r"
+      },
+      "model": {
+        "__name__": "ComponentModel",
+        "name": "const",
+        "params": {
+          "value": 200.0
+        }
+      },
+      "name": "R4",
+      "port_mapping": [
+        "3",
+        "0"
+      ]
+    },
+    {
+      "__name__": "ComponentInstance",
+      "clazz": {
+        "__name__": "ComponentClass",
+        "name": "r",
+        "ports": [
+          "pos",
+          "neg"
+        ],
+        "prefix": "r"
+      },
+      "model": {
+        "__name__": "ComponentModel",
+        "name": "const",
+        "params": {
+          "value": 33.0
+        }
+      },
+      "name": "R5",
+      "port_mapping": [
+        "2",
+        "3"
+      ]
+    }
+  ],
+  "title": "sample1"
+}

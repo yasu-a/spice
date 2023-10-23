@@ -1,0 +1,11 @@
+sample1
+* C:\Users\yasuh\Documents\LTspiceXVII\Draft50.asc
+V1 1 0 5
+R1 1 2 30
+R2 2 0 100
+R3 1 3 300
+R4 3 0 200
+R5 2 3 33
+.op
+.backanno
+.end
