@@ -6,6 +6,8 @@ from enum import Enum
 from comins import ComponentInstance
 from model import ComponentModel
 
+from node import Node
+
 
 class CurrentFlow(Enum):
     OUT = -1
@@ -16,8 +18,12 @@ class ComponentClass(NamedTuple):
     name: str
     prefix: str
     ports: tuple[str, ...]
+    high_side: str
+    low_side: str
     current_flow: tuple[CurrentFlow, ...]
     g_proc: Callable[[ComponentInstance], float] | float = None
+    e_proc: Callable[[ComponentInstance], float] = None
+    j_proc: Callable[[ComponentInstance], float] = None
 
     def calculate_conductance(self, ins: ComponentInstance):
         if self.g_proc is None:
@@ -29,6 +35,21 @@ class ComponentClass(NamedTuple):
         else:
             assert False, self.g_proc
 
+    def calculate_constant_voltage(self, ins: ComponentInstance):
+        if self.e_proc is None:
+            return float('nan')
+        elif callable(self.e_proc):
+            return self.e_proc(ins)
+        else:
+            assert False, self.e_proc
+
+    def calculate_constant_current(self, ins: ComponentInstance):
+        if self.j_proc is None:
+            return float('nan')
+        elif callable(self.j_proc):
+            return self.j_proc(ins)
+        else:
+            assert False, self.j_proc
 
 class ComponentClassSet:
     def __init__(self, classes: tuple[ComponentClass, ...]):
@@ -46,6 +67,7 @@ class ComponentClassSet:
         if clazz is None:
             return None
         assert len(ports) == len(clazz.ports)
+        ports = [Node(node_name) for node_name in ports]
         return ComponentInstance(
             clazz=clazz,
             name=name,
