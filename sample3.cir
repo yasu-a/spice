@@ -1,0 +1,12 @@
+* C:\Users\yasuh\Documents\LTspiceXVII\Draft52.asc
+V1 1 0 5
+B1 0 3 I=I(R3)
+B2 4 0 V=V(1)
+I1 0 2 1m
+R1 2 1 1k
+R2 2 0 2k
+R3 2 0 10k
+R4 4 3 1k
+.op
+.backanno
+.end

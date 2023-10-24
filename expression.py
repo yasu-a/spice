@@ -168,6 +168,9 @@ class Variable(ExprNode):
     def to_python(self, ctx) -> str:
         return self.name
 
+    def as_name(self) -> str:
+        return self.name
+
 
 @dataclass(frozen=True)
 class Probe(Variable):
@@ -179,7 +182,7 @@ class VoltageProbe(Probe):
     def to_python(self, ctx) -> str:
         var_record = ctx['var_record']
         for k, v in var_record.items():
-            # FIXME!
+            # FIXME!: check type with `isinstance`
             if type(k).__name__.startswith('NodePotential') and k.name == self.name:
                 return v.name
         assert False, ctx
@@ -188,6 +191,11 @@ class VoltageProbe(Probe):
 @dataclass(frozen=True)
 class CurrentProbe(Probe):
     def to_python(self, ctx) -> str:
+        for k, (var, expr) in ctx['edge_currents'].items():
+            # FIXME!: check type with `isinstance`
+            if type(k).__name__.startswith('EdgeCurrent') and k.name == self.name:
+                ctx['used_edge_currents'][k] = expr, var
+                return var.name
         assert False, ctx
 
 
@@ -247,7 +255,7 @@ _OPERATOR_MAPPING: dict[ast.BinOp, BinaryOperator] = {ast.Add: OpAdd, ast.Mult: 
 
 def _normalize(src):
     p_space = r'\s+'
-    p_number = r'([+-]?(\d*\.\d+|\d+\.?\d*)([eE][+-]\d+)?)' \
+    p_number = r'(?<![a-zA-Z_])([+-]?(\d*\.\d+|\d+\.?\d*)([eE][+-]\d+)?)' \
                rf'({_MEASUREMENT_UNITS_FLATTEN})?'
 
     src = re.sub(
@@ -294,6 +302,8 @@ def parse(src):
         elif isinstance(item, ast.UnaryOp):
             assert isinstance(item.op, ast.USub), item.op
             return OpUSub(rec(item.operand))
+        elif isinstance(item, ast.Name):
+            return Variable(item.id)
         else:
             assert False, (item, vars(item))
 

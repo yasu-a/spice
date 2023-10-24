@@ -211,10 +211,9 @@ class NetList(NamedTuple):
                 dct[EdgeVoltage(edge)][NodePotential(node)] = sign
         return dct
 
-    def substituted_kcl(self) \
-            -> dict[Node, tuple[EdgeCurrent | EdgeVoltage | NodePotential, ex.ExprNode]]:
+    def node_potential_substituted_ohms_law(self) \
+            -> dict[EdgeCurrent, list[tuple[NodePotential, ex.ExprNode]]]:
         ohm = self.ohms_law()
-        kcl = self.kcl()
         kvl = self.kvl()
 
         for edge_current, (edge_voltage, g) in list(ohm.items()):
@@ -222,6 +221,13 @@ class NetList(NamedTuple):
             for node_potential, sign in kvl[edge_voltage].items():
                 ohm[edge_current].append((node_potential, sign * g))
             ohm[edge_current] = tuple(ohm[edge_current])
+
+        return ohm
+
+    def substituted_kcl(self) \
+            -> dict[Node, tuple[EdgeCurrent | EdgeVoltage | NodePotential, ex.ExprNode]]:
+        ohm = self.node_potential_substituted_ohms_law()
+        kcl = self.kcl()
 
         for node, kcl_node in list(kcl.items()):
             kcl[node] = []
@@ -267,17 +273,17 @@ class NetList(NamedTuple):
 
     def _parse_variable_to_expr(self, variable, record):
         if isinstance(variable, EdgeCurrent):
-            result = ex.Variable(name=f'i_{variable.edge.component.name.lower()}')
+            result = ex.Variable(name=f'x__i_{variable.edge.component.name.lower()}')
         elif isinstance(variable, NodePotential):
-            result = ex.Variable(name=f'e_{variable.node.name.lower()}')
+            result = ex.Variable(name=f'x__e_{variable.node.name.lower()}')
         else:
             assert False, variable
         record[variable] = result
         return result
 
-    def total_equations(self) \
+    def total_equations(self, var_record=None) \
             -> dict[Node | EdgeVoltage | EdgeCurrent, tuple[ex.ExprNode, ex.ExprNode]]:
-        var_record = {}
+        var_record = var_record or {}
         dct = {}
 
         for node, terms in self.substituted_kcl().items():
@@ -290,6 +296,7 @@ class NetList(NamedTuple):
                 else:
                     total_expr = ex.OpAdd(total_expr, expr)
             dct[node] = total_expr.simplify(), ex.ZERO.simplify()
+        dct.popitem()  # eliminate one of kcl
 
         for edge_voltage, (terms, edge_voltage_given) in self.expressions_for_potential().items():
             total_expr = None
@@ -306,5 +313,24 @@ class NetList(NamedTuple):
         for edge_current, edge_current_given in self.expressions_for_current().items():
             var = self._parse_variable_to_expr(edge_current, record=var_record)
             dct[edge_current] = var.simplify(), edge_current_given.simplify()
+
+        return dct, var_record
+
+    def node_potential_substituted_ohms_law_equations(self, var_record=None) \
+            -> dict[EdgeCurrent, tuple[ex.ExprNode, ex.ExprNode]]:
+        ohm = self.node_potential_substituted_ohms_law()
+        var_record = var_record or {}
+        dct = {}
+        for edge_current, terms in ohm.items():
+            total_expr = None
+            for var, expr in terms:
+                var = self._parse_variable_to_expr(var, record=var_record)
+                expr = expr * var
+                if total_expr is None:
+                    total_expr = expr
+                else:
+                    total_expr = ex.OpAdd(total_expr, expr)
+            edge_current_var = self._parse_variable_to_expr(edge_current, record=var_record)
+            dct[edge_current] = edge_current_var.simplify(), total_expr.simplify()
 
         return dct, var_record
