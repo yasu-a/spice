@@ -17,25 +17,37 @@ class NodePortPair:
     def __lt__(self, other):
         if not isinstance(other, NodePortPair):
             return NotImplemented
-        if not self.component.name < other.component.name:
-            return False
-        if not self.node < other.node:
-            return False
-        if not self.port_name < other.port_name:
-            return False
-        return True
+        if self.component.name < other.component.name:
+            return True
+        if self.node < other.node:
+            return True
+        if self.port_name < other.port_name:
+            return True
+        return False
 
     def __repr__(self):
         return f'NodePortPair({self.component.name}, {self.node.name}, {self.port_name})'
 
 
 class ComponentInstance(NamedTuple):
+    source_line: str
     clazz: 'ComponentClass'
     name: str
     port_mapping: tuple['Node', ...]
     model: 'ComponentModel'
 
-    # TODO: impl calculate_conductance
+    def __lt__(self, other):
+        if not isinstance(other, ComponentInstance):
+            return NotImplemented
+        if self.clazz < other.clazz:
+            return True
+        if self.name < other.name:
+            return True
+        return False
+
+    @property
+    def conductance(self) -> float:
+        return self.clazz.calculate_conductance(self)
 
     @property
     def constant_voltage(self) -> float:
@@ -68,10 +80,6 @@ class ComponentInstance(NamedTuple):
             for port, node, current_flow in \
             zip(self.clazz.ports, self.port_mapping, self.clazz.current_flow)
         }
-
-    @property
-    def conductance(self):
-        return self.clazz.calculate_conductance(self)
 
     def list_node_and_port(self) -> list[NodePortPair]:
         return [

@@ -1,9 +1,13 @@
+from frozendict import frozendict
+from pprint import pprint
 import collections
 import operator
 from dataclasses import dataclass
 from typing import NamedTuple, TYPE_CHECKING
-
+from model import ComponentModel
 import numpy as np
+
+import expression as ex
 
 if TYPE_CHECKING:
     from comcls import ComponentClassSet
@@ -53,6 +57,32 @@ class NodePotential(NodePropertyBase):
     pass
 
 
+def parse_linear(node: ex.ExprNode):
+    print(node)
+    if not isinstance(node, ex.OpMul):
+        return None
+    if isinstance(node.b, ex.Constant):
+        node = ex.OpMul(a=node.b, b=node.a)
+    if not isinstance(node.a, ex.Constant):
+        return None
+    if isinstance(node.b, ex.OpUSub):
+        node = ex.OpMul(a=ex.OpUSub(node.a), b=node.b.a)
+    if not isinstance(node.b, ex.Function):
+        return None
+    if len(node.b.args) != 1:
+        return None
+    if not isinstance(node.b.args[0], ex.Constant):
+        return None
+    return ComponentModel(
+        name='linear',
+        params=frozendict(
+            factor=node.a.evaluate(),
+            edge_name=node.b.args[0].as_name(),
+            probe_type=node.b.name
+        )
+    )
+
+
 class NetList(NamedTuple):
     title: str
     components: tuple['ComponentInstance', ...]
@@ -83,6 +113,23 @@ class NetList(NamedTuple):
             else:
                 ins = class_set.parse_netlist_line(line)
                 components.append(ins)
+
+        # re-parse models
+        for i, com in enumerate(components):
+            if com.clazz is None:
+                value: ex.ExprNode = com.model.params['value']
+                assert isinstance(value, ex.NamedValue), value
+                val_name = value.var_name
+                model_expr = value.node
+                model = parse_linear(model_expr)
+                assert model is not None, 'model accepts only linear one'
+                ins = class_set.parse_netlist_line(
+                    line=com.source_line,
+                    force_prefix=val_name,
+                    force_model=model
+                )
+                assert ins is not None
+                components[i] = ins
 
         return cls(
             title=title,
@@ -156,8 +203,8 @@ class NetList(NamedTuple):
         e = np.zeros(shape=(self.edge_count(), self.node_count()))
         for com in self.components:
             com_index = self.lookup_component_index(com)
-            node_high = com.port_assign[com.clazz.high_side]['node']
-            node_low = com.port_assign[com.clazz.low_side]['node']
+            node_high = com.port_assign[com.clazz.port_high]['node']
+            node_low = com.port_assign[com.clazz.port_low]['node']
             node_index_high = self.lookup_node_index(node_high)
             node_index_low = self.lookup_node_index(node_low)
             e[com_index, [node_index_high, node_index_low]] = [1, -1]

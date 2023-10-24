@@ -10,8 +10,6 @@ from ntpprint import pprint, nt_asdict
 
 from netlist import NetList
 from comcls import ComponentClass, ComponentClassSet, CurrentFlow
-from comins import ComponentInstance
-from model import ComponentModel
 
 
 def main():
@@ -20,38 +18,51 @@ def main():
             ComponentClass(
                 name='vs',
                 prefix='v',
-                ports=('pos', 'neg'),
-                high_side='pos',
-                low_side='neg',
+                port_high='pos',
+                port_low='neg',
                 current_flow=(CurrentFlow.IN, CurrentFlow.OUT),
                 e_proc=lambda ins: ins.model.params['value']
             ),
-            # ComponentClass(
-            #     name='vcvs',
-            #     prefix='e',
-            #     ports=('pos', 'neg', 'c_pos', 'c_neg'),
-            #     current_flow=(CurrentFlow.IN, CurrentFlow.OUT)
-            # ),
+            ComponentClass(
+                name='cs',
+                prefix='I',
+                port_high='pos',
+                port_low='neg',
+                current_flow=(CurrentFlow.IN, CurrentFlow.OUT),
+                j_proc=lambda ins: ins.model.params['value']
+            ),
+            ComponentClass(
+                name='bv',
+                prefix='E',
+                port_high='pos',
+                port_low='neg',
+                current_flow=(CurrentFlow.IN, CurrentFlow.OUT)
+            ),
+            ComponentClass(
+                name='bi',
+                prefix='G',
+                port_high='pos',
+                port_low='neg',
+                current_flow=(CurrentFlow.IN, CurrentFlow.OUT)
+            ),
             ComponentClass(
                 name='r',
                 prefix='r',
-                ports=('begin', 'end'),
-                high_side='begin',
-                low_side='end',
+                port_high='begin',
+                port_low='end',
                 current_flow=(CurrentFlow.IN, CurrentFlow.OUT),
                 g_proc=lambda ins: 1 / ins.model.params['value']
             )
         )
     )
 
-    with open('netlist.cir', 'r') as f:
+    with open('sample1.cir', 'r') as f:
         netlist = NetList.from_string(
             source=f.read(),
             class_set=class_set
         )
 
-    # KCL
-    node_names = netlist.list_node_port_pair()
+    pprint(netlist.components)
 
     # print(netlist.edge_voltage_vector())
     print(netlist.conductance_matrix())
