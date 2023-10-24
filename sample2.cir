@@ -1,0 +1,10 @@
+sample2
+* C:\Users\yasuh\Documents\LTspiceXVII\Draft51.asc
+I1 0 1 1n
+R1 2 1 1G
+B1 3 0 V=-V(2)*1.0e+6
+R2 3 2 1Meg
+R3 2 0 1G
+.op
+.backanno
+.end
