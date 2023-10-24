@@ -1,9 +1,11 @@
+import math
+
 from frozendict import frozendict
 from pprint import pprint
 import collections
 import operator
 from dataclasses import dataclass
-from typing import NamedTuple, TYPE_CHECKING
+from typing import NamedTuple, TYPE_CHECKING, Any
 from model import ComponentModel
 import numpy as np
 
@@ -16,16 +18,27 @@ from node import Node
 
 
 @dataclass(frozen=True)
-class EdgePropertyBase:
-    component: 'ComponentInstance'
+class NameGettable:
+    @property
+    def name(self):
+        raise NotImplementedError()
+
+
+@dataclass(frozen=True)
+class EdgePropertyBase(NameGettable):
+    edge: 'Edge'
+
+    @property
+    def name(self):
+        return self.edge.component.name
 
     def __repr__(self):
-        return f'{type(self).__name__}(edge_name={self.component.name!r})'
+        return f'{type(self).__name__}(edge_name={self.edge.component.name!r})'
 
     def __lt__(self, other):
         if not isinstance(other, EdgePropertyBase):
             return NotImplemented
-        if self.component.name < other.component.name:
+        if self.edge < other.edge:
             return True
         return False
 
@@ -39,8 +52,12 @@ class EdgeVoltage(EdgePropertyBase):
 
 
 @dataclass(frozen=True)
-class NodePropertyBase:
+class NodePropertyBase(NameGettable):
     node: 'Node'
+
+    @property
+    def name(self):
+        return self.node.name
 
     def __repr__(self):
         return f'{type(self).__name__}(edge_name={self.node.name!r})'
@@ -55,6 +72,21 @@ class NodePropertyBase:
 
 class NodePotential(NodePropertyBase):
     pass
+
+
+@dataclass(frozen=True)
+class Edge:
+    component: 'ComponentInstance'
+
+    def __repr__(self):
+        return f'Edge(name={self.component.name!r})'
+
+    def __lt__(self, other):
+        if not isinstance(other, Edge):
+            return NotImplemented
+        if self.component.name < other.component.name:
+            return True
+        return False
 
 
 def parse_linear(node: ex.ExprNode):
@@ -83,14 +115,16 @@ def parse_linear(node: ex.ExprNode):
     )
 
 
+def split_behavioral_name_and_expr(expr: ex.ExprNode):
+    if not isinstance(expr, ex.NamedValue):
+        return None
+    return expr.var_name, expr.node
+
+
 class NetList(NamedTuple):
     title: str
     components: tuple['ComponentInstance', ...]
     commands: tuple[str, ...]
-
-    @property
-    def nodes(self) -> tuple['Node']:
-        return tuple(Node(name) for name in self.list_nodes())
 
     @classmethod
     def from_string(cls, source: str, class_set: 'ComponentClassSet'):
@@ -117,16 +151,11 @@ class NetList(NamedTuple):
         # re-parse models
         for i, com in enumerate(components):
             if com.clazz is None:
-                value: ex.ExprNode = com.model.params['value']
-                assert isinstance(value, ex.NamedValue), value
-                val_name = value.var_name
-                model_expr = value.node
-                model = parse_linear(model_expr)
-                assert model is not None, 'model accepts only linear one'
+                var_name, model_expr = split_behavioral_name_and_expr(com.model.expr)
                 ins = class_set.parse_netlist_line(
                     line=com.source_line,
-                    force_prefix=val_name,
-                    force_model=model
+                    force_prefix=var_name,
+                    force_expr=model_expr
                 )
                 assert ins is not None
                 components[i] = ins
@@ -137,87 +166,143 @@ class NetList(NamedTuple):
             commands=tuple(commands)
         )
 
-    def list_components(self) -> list['ComponentInstance']:
-        return sorted(self.components)
+    @property
+    def edges(self) -> list[Edge]:
+        return sorted(Edge(com) for com in self.components)
 
-    def list_node_port_pair(self) -> list['NodePortPair']:
-        return sorted(x for com in self.list_components() for x in com.list_node_and_port())
+    @property
+    def nodes(self) -> list[Node]:
+        return sorted({node for com in self.components for node in com.nodes})
 
-    def list_nodes(self) -> dict['Node', list['NodePortPair']]:
-        result = collections.defaultdict(list)
-        for npp in self.list_node_port_pair():
-            result[npp.node].append(npp)
-        return collections.OrderedDict(sorted(result.items(), key=operator.itemgetter(0)))
-
-    def lookup_node_index(self, node: 'Node'):
-        # TODO: optimize!
-        for i, nn in enumerate(self.list_nodes()):
-            if node == nn:
-                return i
-        assert False, node
-
-    def lookup_component_index(self, com):
-        for i, c in enumerate(self.list_components()):
-            if com == c:
-                return i
-        assert False, com
-
-    def edge_count(self):
-        return len(self.components)
-
-    def node_count(self):
-        return len(self.nodes)
-
-    def edge_current_vector(self):  # i
-        return [EdgeCurrent(com) for com in self.list_components()]
-
-    def edge_voltage_vector(self):  # v
-        return [EdgeVoltage(com) for com in self.list_components()]
-
-    def node_potential_vector(self):  # e
-        return [NodePotential(node) for node in self.nodes]
-
-    def conductance_matrix(self):
-        g = np.diagflat([com.conductance for com in self.list_components()])
-        assert g.shape == (self.edge_count(), self.edge_count())
-        return g
-
-    def voltage_matrix(self):
-        ev = np.zeros(shape=(self.edge_count(), self.node_count()))
-        for i, com in enumerate(self.list_components()):
-            for node, current_flow in zip(com.port_mapping, com.clazz.current_flow):
-                j = self.lookup_node_index(node)
-                ev[i, j] = current_flow.value
-        return ev
-
-    def kcl(self):
-        p = np.zeros(shape=(self.node_count(), self.edge_count()))
-        for node, npp_lst in self.list_nodes().items():
-            node_index = self.lookup_node_index(node)
-            for nnp in npp_lst:
-                com_index = self.lookup_component_index(nnp.component)
-                p[node_index, com_index] = nnp.component.node_assign[node]['current_flow'].value
-        return p
-
-    def kvl(self):
-        e = np.zeros(shape=(self.edge_count(), self.node_count()))
+    def ports_with_node(self, node: Node) -> list['NodePortPair']:
+        lst = []
         for com in self.components:
-            com_index = self.lookup_component_index(com)
-            node_high = com.port_assign[com.clazz.port_high]['node']
-            node_low = com.port_assign[com.clazz.port_low]['node']
-            node_index_high = self.lookup_node_index(node_high)
-            node_index_low = self.lookup_node_index(node_low)
-            e[com_index, [node_index_high, node_index_low]] = [1, -1]
-        return e
+            nnp_lst = com.list_node_and_port()
+            for nnp in nnp_lst:
+                if nnp.node == node:
+                    lst.append(nnp)
+        return lst
 
-    def constant_voltage(self):
-        c = np.zeros(self.edge_count())
-        for i, edge_voltage in enumerate(self.edge_voltage_vector()):
-            c[i] = edge_voltage.component.constant_voltage
-        return c
+    def ohms_law(self) -> dict[EdgeCurrent, tuple[EdgeVoltage, ex.ExprNode]]:
+        dct = {}
+        for edge in self.edges:
+            if edge.component.conductance is None:
+                continue
+            dct[EdgeCurrent(edge)] = EdgeVoltage(edge), edge.component.conductance
+        return dct
 
-    def constant_current(self):
-        c = np.zeros(self.edge_count())
-        for i, edge_current in enumerate(self.edge_current_vector()):
-            c[i] = edge_current.component.constant_current
-        return c
+    def kcl(self) -> dict[Node, list[tuple[EdgeCurrent, ex.ExprNode]]]:
+        dct = {}
+        for node in self.nodes:
+            nnp_with_node = self.ports_with_node(node)
+            cfs = [nnp.component.current_flow(nnp.port_name) for nnp in nnp_with_node]
+            dct[node] = []
+            for nnp, cf in zip(nnp_with_node, cfs):
+                dct[node].append((EdgeCurrent(Edge(nnp.component)), ex.Constant(cf.value)))
+        return dct
+
+    def kvl(self) -> dict[EdgeVoltage, dict[NodePotential, ex.ExprNode]]:
+        dct = {}
+        for edge in self.edges:
+            node_high = edge.component.port_to_node[edge.component.clazz.port_high]
+            node_low = edge.component.port_to_node[edge.component.clazz.port_low]
+            dct[EdgeVoltage(edge)] = {}
+            for node, sign in zip([node_high, node_low], [ex.POS_ONE, ex.NEG_ONE]):
+                dct[EdgeVoltage(edge)][NodePotential(node)] = sign
+        return dct
+
+    def substituted_kcl(self) \
+            -> dict[Node, tuple[EdgeCurrent | EdgeVoltage | NodePotential, ex.ExprNode]]:
+        ohm = self.ohms_law()
+        kcl = self.kcl()
+        kvl = self.kvl()
+
+        for edge_current, (edge_voltage, g) in list(ohm.items()):
+            ohm[edge_current] = []
+            for node_potential, sign in kvl[edge_voltage].items():
+                ohm[edge_current].append((node_potential, sign * g))
+            ohm[edge_current] = tuple(ohm[edge_current])
+
+        for node, kcl_node in list(kcl.items()):
+            kcl[node] = []
+            for edge_current, sign in kcl_node:
+                if edge_current in ohm:
+                    for node_potential, g in ohm[edge_current]:
+                        kcl[node].append((node_potential, sign * g))
+                else:
+                    kcl[node].append((edge_current, sign))
+
+        return kcl
+
+    def expressions_for_voltage(self) -> dict[EdgeVoltage, ex.ExprNode]:
+        dct = {}
+        for edge in self.edges:
+            if edge.component.constant_voltage is None:
+                continue
+            dct[EdgeVoltage(edge)] = edge.component.constant_voltage
+        return dct
+
+    def expressions_for_potential(self) \
+            -> dict[EdgeVoltage, tuple[list[tuple[NodePotential, ex.ExprNode]], ex.ExprNode]]:
+        expr_vol = self.expressions_for_voltage()
+        kvl = self.kvl()
+
+        for edge_voltage, expr in list(expr_vol.items()):
+            expr_vol[edge_voltage] = []
+            for node_potential, sign in kvl[edge_voltage].items():
+                expr_vol[edge_voltage].append((node_potential, sign))
+            expr_vol[edge_voltage] = expr_vol[edge_voltage], expr
+
+        return expr_vol
+
+    def expressions_for_current(self) -> dict[EdgeCurrent, ex.ExprNode]:
+        dct = {}
+        for edge in self.edges:
+            if edge.component.constant_current is None:
+                continue
+            dct[EdgeCurrent(edge)] = edge.component.constant_current
+        return dct
+
+    def _parse_variable_to_expr(self, variable, record):
+        if isinstance(variable, EdgeCurrent):
+            result = ex.Variable(name=f'i_{variable.edge.component.name.lower()}')
+        elif isinstance(variable, NodePotential):
+            result = ex.Variable(name=f'e_{variable.node.name.lower()}')
+        else:
+            assert False, variable
+        record[variable] = result
+        return result
+
+    def total_equations(self) \
+            -> dict[Node | EdgeVoltage | EdgeCurrent, tuple[ex.ExprNode, ex.ExprNode]]:
+        var_record = {}
+        dct = {}
+
+        for node, terms in self.substituted_kcl().items():
+            total_expr = None
+            for var, expr in terms:
+                var = self._parse_variable_to_expr(var, record=var_record)
+                expr = expr * var
+                if total_expr is None:
+                    total_expr = expr
+                else:
+                    total_expr = ex.OpAdd(total_expr, expr)
+            dct[node] = total_expr.simplify(), ex.ZERO.simplify()
+
+        for edge_voltage, (terms, edge_voltage_given) in self.expressions_for_potential().items():
+            total_expr = None
+            for var, expr in terms:
+                var = self._parse_variable_to_expr(var, record=var_record)
+                expr = expr * var
+                if total_expr is None:
+                    total_expr = expr
+                else:
+                    total_expr = ex.OpAdd(total_expr, expr)
+            dct[edge_voltage] = total_expr.simplify(), edge_voltage_given.simplify()
+
+        # dict[EdgeCurrent, ex.ExprNode]
+        for edge_current, edge_current_given in self.expressions_for_current().items():
+            var = self._parse_variable_to_expr(edge_current, record=var_record)
+            dct[edge_current] = var.simplify(), edge_current_given.simplify()
+
+        return dct, var_record

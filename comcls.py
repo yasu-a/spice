@@ -4,7 +4,7 @@ import re
 from typing import NamedTuple, Callable
 from enum import Enum
 
-import expression
+import expression as ex
 from comins import ComponentInstance
 from model import ComponentModel
 
@@ -28,12 +28,12 @@ class ComponentClass(ComponentClassBase):
     port_high: str
     port_low: str
     current_flow: tuple[CurrentFlow, ...]
-    g_proc: Callable[[ComponentInstance], float] | float = None
-    e_proc: Callable[[ComponentInstance], float] = None
-    j_proc: Callable[[ComponentInstance], float] = None
+    g_proc: Callable[[ComponentInstance], ex.ExprNode] = None
+    e_proc: Callable[[ComponentInstance], ex.ExprNode] = None
+    j_proc: Callable[[ComponentInstance], ex.ExprNode] = None
 
     def __repr__(self):
-        return f'ComponentClass(name={self.name!r})'
+        return f'ComClass(name={self.name!r})'
 
     def __lt__(self, other):
         if not isinstance(other, ComponentClass):
@@ -46,7 +46,7 @@ class ComponentClass(ComponentClassBase):
 
     def calculate_conductance(self, ins: ComponentInstance):
         if self.g_proc is None:
-            return float('nan')
+            return None
         elif isinstance(self.g_proc, float):
             return self.g_proc
         elif callable(self.g_proc):
@@ -56,7 +56,7 @@ class ComponentClass(ComponentClassBase):
 
     def calculate_constant_voltage(self, ins: ComponentInstance):
         if self.e_proc is None:
-            return float('nan')
+            return None
         elif callable(self.e_proc):
             return self.e_proc(ins)
         else:
@@ -64,7 +64,7 @@ class ComponentClass(ComponentClassBase):
 
     def calculate_constant_current(self, ins: ComponentInstance):
         if self.j_proc is None:
-            return float('nan')
+            return None
         elif callable(self.j_proc):
             return self.j_proc(ins)
         else:
@@ -83,27 +83,18 @@ class ComponentClassSet:
                 return clazz
         return None
 
-    @classmethod
-    def _parse_model(cls, model_str):
-        node = expression.parse(model_str)
-        try:
-            node = node.evaluate()
-        except NotImplementedError:
-            pass
-        return node
-
     def parse_netlist_line(
             self, line,
             force_prefix=None,
-            force_model=None
+            force_expr=None
     ) -> 'ComponentInstance | None':
         name, *ports, model_str = re.split(r'\s+', line)
         clazz = self._find_by_prefix(name, force_prefix=force_prefix)
         assert clazz is None or len(ports) == len(clazz.ports)
         ports = [Node(node_name) for node_name in ports]
-        model = force_model or ComponentModel(
-            name='const',
-            params=frozendict(value=self._parse_model(model_str))
+        model = ComponentModel(
+            name='expr',
+            expr=force_expr or ex.parse(model_str)
         )
         return ComponentInstance(
             source_line=line,

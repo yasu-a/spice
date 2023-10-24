@@ -1,4 +1,5 @@
 import numpy as np
+import expression as ex
 
 np.set_printoptions(
     formatter={'float_kind': '{:10.6f}'.format}
@@ -21,7 +22,7 @@ def main():
                 port_high='pos',
                 port_low='neg',
                 current_flow=(CurrentFlow.IN, CurrentFlow.OUT),
-                e_proc=lambda ins: ins.model.params['value']
+                e_proc=lambda ins: ins.model.expr
             ),
             ComponentClass(
                 name='cs',
@@ -29,21 +30,7 @@ def main():
                 port_high='pos',
                 port_low='neg',
                 current_flow=(CurrentFlow.IN, CurrentFlow.OUT),
-                j_proc=lambda ins: ins.model.params['value']
-            ),
-            ComponentClass(
-                name='bv',
-                prefix='E',
-                port_high='pos',
-                port_low='neg',
-                current_flow=(CurrentFlow.IN, CurrentFlow.OUT)
-            ),
-            ComponentClass(
-                name='bi',
-                prefix='G',
-                port_high='pos',
-                port_low='neg',
-                current_flow=(CurrentFlow.IN, CurrentFlow.OUT)
+                j_proc=lambda ins: ins.model.expr
             ),
             ComponentClass(
                 name='r',
@@ -51,18 +38,50 @@ def main():
                 port_high='begin',
                 port_low='end',
                 current_flow=(CurrentFlow.IN, CurrentFlow.OUT),
-                g_proc=lambda ins: 1 / ins.model.params['value']
+                g_proc=lambda ins: ex.OpInvert(ins.model.expr)
             )
         )
     )
 
-    with open('sample1.cir', 'r') as f:
+    with open('sample2.cir', 'r') as f:
         netlist = NetList.from_string(
             source=f.read(),
             class_set=class_set
         )
 
+    print('\nnetlist.components')
     pprint(netlist.components)
+
+    print('\nnetlist.ohms_law')
+    pprint(netlist.ohms_law())
+
+    print('\nnetlist.kcl')
+    pprint(netlist.kcl())
+
+    print('\nnetlist.kvl')
+    pprint(netlist.kvl())
+
+    print('\nnetlist.substituted_kcl')
+    pprint(netlist.substituted_kcl())
+
+    print('\nnetlist.expressions_for_potential')
+    pprint(netlist.expressions_for_potential())
+
+    print('\nnetlist.expressions_for_current')
+    pprint(netlist.expressions_for_current())
+
+    print('\nnetlist.total_equations')
+    pprint(netlist.total_equations())
+
+    print()
+    dct, rec = netlist.total_equations()
+    pprint(rec)
+    ctx = dict(var_record=rec)
+    for a, (b, c) in dct.items():
+        print(a)
+        print(b.to_python(ctx), '=', c.to_python(ctx))
+
+    return
 
     # print(netlist.edge_voltage_vector())
     print(netlist.conductance_matrix())

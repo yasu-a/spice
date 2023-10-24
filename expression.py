@@ -6,10 +6,35 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ExprNode:
-    def evaluate(self):
+    def evaluate(self) -> float:
         raise NotImplementedError()
 
     def children(self):
+        raise NotImplementedError()
+
+    def _py_unary_operation(self, clazz: type['UnaryOperator']):
+        return clazz(a=self)
+
+    def _py_binary_operation(self, other, clazz: type['BinaryOperator']):
+        if isinstance(other, (float, int)):
+            other = Constant(other)
+        if not isinstance(other, ExprNode):
+            return NotImplemented
+        return clazz(a=self, b=other)
+
+    def __neg__(self):
+        return self._py_unary_operation(OpUSub)
+
+    def __add__(self, other):
+        return self._py_binary_operation(other, OpAdd)
+
+    def __mul__(self, other):
+        return self._py_binary_operation(other, OpMul)
+
+    def simplify(self) -> 'ExprNode':
+        return self
+
+    def to_python(self, ctx) -> str:
         raise NotImplementedError()
 
 
@@ -17,7 +42,7 @@ class ExprNode:
 class Constant(ExprNode):
     value: float
 
-    def evaluate(self):
+    def evaluate(self) -> float:
         return self.value
 
     def children(self):
@@ -26,6 +51,14 @@ class Constant(ExprNode):
     def as_name(self):
         return str(int(self.value))
 
+    def to_python(self, ctx) -> str:
+        return repr(self.value)
+
+
+POS_ONE = Constant(+1)
+ZERO = Constant(0)
+NEG_ONE = Constant(-1)
+
 
 @dataclass(frozen=True)
 class BinaryOperator(ExprNode):
@@ -33,29 +66,39 @@ class BinaryOperator(ExprNode):
     b: ExprNode
 
     @classmethod
-    def _calc_impl(cls, a, b):
+    def _calc_impl(cls, a, b) -> float:
         raise NotImplementedError()
 
-    def evaluate(self):
+    def evaluate(self) -> float:
         return self._calc_impl(self.a, self.b)
 
     def children(self):
         yield self.b
         yield self.a
 
+    def simplify(self) -> 'ExprNode':
+        ins = type(self)(self.a.simplify(), self.b.simplify())
+        try:
+            return Constant(ins.evaluate())
+        except NotImplementedError:
+            return ins
+
+    def to_python(self, ctx) -> str:
+        return '(' + self.a.to_python(ctx) + ' + ' + self.b.to_python(ctx) + ')'
+
 
 @dataclass(frozen=True)
 class OpAdd(BinaryOperator):
     @classmethod
-    def _calc_impl(cls, a, b):
-        raise a.evaluate() + b.evaluate()
+    def _calc_impl(cls, a, b) -> float:
+        return a.evaluate() + b.evaluate()
 
 
 @dataclass(frozen=True)
 class OpMul(BinaryOperator):
     @classmethod
-    def _calc_impl(cls, a, b):
-        raise a.evaluate() * b.evaluate()
+    def _calc_impl(cls, a, b) -> float:
+        return a.evaluate() * b.evaluate()
 
 
 @dataclass(frozen=True)
@@ -63,21 +106,41 @@ class UnaryOperator(ExprNode):
     a: ExprNode
 
     @classmethod
-    def _calc_impl(cls, a):
+    def _calc_impl(cls, a) -> float:
         raise NotImplementedError()
 
-    def evaluate(self):
+    def evaluate(self) -> float:
         return self._calc_impl(self.a)
 
     def children(self):
         yield self.a
 
+    def simplify(self) -> 'ExprNode':
+        ins = type(self)(self.a.simplify())
+        try:
+            return Constant(ins.evaluate())
+        except NotImplementedError:
+            return ins
+
 
 @dataclass(frozen=True)
 class OpUSub(UnaryOperator):
     @classmethod
-    def _calc_impl(cls, a):
+    def _calc_impl(cls, a) -> float:
         return -a.evaluate()
+
+    def to_python(self, ctx) -> str:
+        return '-(' + self.a.to_python(ctx) + ')'
+
+
+@dataclass(frozen=True)
+class OpInvert(UnaryOperator):
+    @classmethod
+    def _calc_impl(cls, a) -> float:
+        return 1 / a.evaluate()
+
+    def to_python(self, ctx) -> str:
+        return '(1 / ' + self.a.to_python(ctx) + ')'
 
 
 @dataclass(frozen=True)
@@ -85,11 +148,44 @@ class Function(ExprNode):
     name: str
     args: tuple[ExprNode]
 
-    def evaluate(self):
-        raise NotImplementedError()
-
     def children(self):
         yield from self.args
+
+    def to_python(self, ctx) -> str:
+        return self.name + '(' + ', '.join(arg.to_python(ctx) for arg in self.args) + ')'
+
+
+@dataclass(frozen=True)
+class Variable(ExprNode):
+    name: str
+
+    def children(self):
+        yield from []
+
+    def to_python(self, ctx) -> str:
+        return self.name
+
+
+@dataclass(frozen=True)
+class Probe(Variable):
+    pass
+
+
+@dataclass(frozen=True)
+class VoltageProbe(Probe):
+    def to_python(self, ctx) -> str:
+        var_record = ctx['var_record']
+        for k, v in var_record.items():
+            # FIXME!
+            if type(k).__name__.startswith('NodePotential') and k.name == self.name:
+                return v.name
+        assert False, ctx
+
+
+@dataclass(frozen=True)
+class CurrentProbe(Probe):
+    def to_python(self, ctx) -> str:
+        assert False, ctx
 
 
 @dataclass(frozen=True)
@@ -183,6 +279,10 @@ def parse(src):
             return Constant(item.value)
         elif isinstance(item, ast.Call):
             args = tuple(rec(arg) for arg in item.args)
+            if len(args) == 1:
+                if item.func.id in 'VvIi':
+                    probe_type = dict(v=VoltageProbe, i=CurrentProbe).get(item.func.id.lower())
+                    return probe_type(args[0].as_name())
             return Function(name=item.func.id, args=args)
         elif isinstance(item, ast.Assign):
             name, val = item.targets[0].id, item.value

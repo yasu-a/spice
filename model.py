@@ -9,4 +9,4 @@ from frozendict import frozendict
 
 class ComponentModel(NamedTuple):
     name: str
-    params: frozendict[str, float | expression.ExprNode]
+    expr: expression.ExprNode
