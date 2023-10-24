@@ -83,9 +83,6 @@ class BinaryOperator(ExprNode):
         except NotImplementedError:
             return ins
 
-    def to_python(self, ctx) -> str:
-        return '(' + self.a.to_python(ctx) + ' + ' + self.b.to_python(ctx) + ')'
-
 
 @dataclass(frozen=True)
 class OpAdd(BinaryOperator):
@@ -93,12 +90,18 @@ class OpAdd(BinaryOperator):
     def _calc_impl(cls, a, b) -> float:
         return a.evaluate() + b.evaluate()
 
+    def to_python(self, ctx) -> str:
+        return '(' + self.a.to_python(ctx) + ' + ' + self.b.to_python(ctx) + ')'
+
 
 @dataclass(frozen=True)
 class OpMul(BinaryOperator):
     @classmethod
     def _calc_impl(cls, a, b) -> float:
         return a.evaluate() * b.evaluate()
+
+    def to_python(self, ctx) -> str:
+        return '(' + self.a.to_python(ctx) + ' * ' + self.b.to_python(ctx) + ')'
 
 
 @dataclass(frozen=True)

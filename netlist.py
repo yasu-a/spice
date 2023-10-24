@@ -253,6 +253,8 @@ class NetList(NamedTuple):
                 expr_vol[edge_voltage].append((node_potential, sign))
             expr_vol[edge_voltage] = expr_vol[edge_voltage], expr
 
+        expr_vol[None] = [(NodePotential(Node('0')), ex.POS_ONE)], ex.ZERO
+
         return expr_vol
 
     def expressions_for_current(self) -> dict[EdgeCurrent, ex.ExprNode]:

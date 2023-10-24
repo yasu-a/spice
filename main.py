@@ -43,7 +43,7 @@ def main():
         )
     )
 
-    with open('sample2.cir', 'r') as f:
+    with open('sample1.cir', 'r') as f:
         netlist = NetList.from_string(
             source=f.read(),
             class_set=class_set
@@ -80,36 +80,6 @@ def main():
     for a, (b, c) in dct.items():
         print(a)
         print(b.to_python(ctx), '=', c.to_python(ctx))
-
-    return
-
-    # print(netlist.edge_voltage_vector())
-    print(netlist.conductance_matrix())
-    # print(netlist.edge_current_vector())
-
-    # print(netlist.node_potential_vector())
-    print(netlist.kcl())
-    # print(netlist.edge_current_vector())
-
-    # print(netlist.edge_voltage_vector())
-    print(netlist.kvl())
-    # print(netlist.node_potential_vector())
-
-    # print(netlist.edge_voltage_vector())
-    print(netlist.constant_voltage())
-
-    # print(netlist.edge_current_vector())
-    print(netlist.constant_current())
-
-    P = np.nan_to_num(netlist.kcl(), nan=0)
-    G = np.nan_to_num(netlist.conductance_matrix(), nan=0)
-    Esd = np.nan_to_num(netlist.kvl(), nan=0)
-    M = np.matmul(np.matmul(P, G), Esd)
-
-    print(M)
-    print(netlist.node_potential_vector())
-
-    # pprint(nt_asdict(netlist.conductance_matrix()))
 
 
 if __name__ == '__main__':
