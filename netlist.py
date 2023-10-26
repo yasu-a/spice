@@ -1,11 +1,13 @@
+import functools
 import math
+from abc import ABC
 
 from frozendict import frozendict
 from pprint import pprint
 import collections
 import operator
 from dataclasses import dataclass
-from typing import NamedTuple, TYPE_CHECKING, Any
+from typing import NamedTuple, TYPE_CHECKING, Any, TypeVar
 from model import ComponentModel
 import numpy as np
 
@@ -19,59 +21,88 @@ from node import Node
 
 @dataclass(frozen=True)
 class NameGettable:
+    @classmethod
+    def _name_source(cls) -> str:
+        raise NotImplementedError()
+
+    def _order_sources(self) -> tuple:
+        return getattr(self, self._name_source()),
+
+    def __lt__(self, other):
+        if not isinstance(other, type(self)):
+            return NotImplemented
+        for this_src, other_src \
+                in zip(self._order_sources(), other._order_sources()):
+            if this_src < other_src:
+                return True
+        return False
+
     @property
     def name(self):
         raise NotImplementedError()
 
+    def __repr__(self):
+        return f'{type(self).__name__}({self._name_source()}={self.name!r})'
+
 
 @dataclass(frozen=True)
-class EdgePropertyBase(NameGettable):
+class CircuitVariable(NameGettable, ABC):
+    @classmethod
+    def _suffix(cls):
+        raise NotImplementedError()
+
+    def to_expr_variable(self):
+        return ex.Variable(name=f'_{self._suffix()}_{self.name.lower()}')
+
+    def term(self, k=None):
+        if k is None:
+            k = ex.POS_ONE
+        return LinearTerm(k=k, element=self)
+
+
+@dataclass(frozen=True)
+class EdgeProperty(CircuitVariable, ABC):
     edge: 'Edge'
 
     @property
     def name(self):
         return self.edge.component.name
 
-    def __repr__(self):
-        return f'{type(self).__name__}(edge_name={self.edge.component.name!r})'
-
-    def __lt__(self, other):
-        if not isinstance(other, EdgePropertyBase):
-            return NotImplemented
-        if self.edge < other.edge:
-            return True
-        return False
+    @classmethod
+    def _name_source(cls) -> str:
+        return 'edge'
 
 
-class EdgeCurrent(EdgePropertyBase):
-    pass
+class EdgeCurrent(EdgeProperty):
+    @classmethod
+    def _suffix(cls):
+        return 'i'
 
 
-class EdgeVoltage(EdgePropertyBase):
-    pass
+class EdgeVoltage(EdgeProperty):
+
+    @classmethod
+    def _suffix(cls):
+        return 'v'
 
 
 @dataclass(frozen=True)
-class NodePropertyBase(NameGettable):
+class NodeProperty(CircuitVariable, ABC):
     node: 'Node'
 
     @property
     def name(self):
         return self.node.name
 
-    def __repr__(self):
-        return f'{type(self).__name__}(edge_name={self.node.name!r})'
-
-    def __lt__(self, other):
-        if not isinstance(other, NodePropertyBase):
-            return NotImplemented
-        if self.node < other.node:
-            return True
-        return False
+    @classmethod
+    def _name_source(cls) -> str:
+        return 'node'
 
 
-class NodePotential(NodePropertyBase):
-    pass
+class NodePotential(NodeProperty):
+    @classmethod
+    def _suffix(cls):
+        return 'e'
 
 
 @dataclass(frozen=True)
@@ -89,36 +120,184 @@ class Edge:
         return False
 
 
-def parse_linear(node: ex.ExprNode):
-    print(node)
-    if not isinstance(node, ex.OpMul):
-        return None
-    if isinstance(node.b, ex.Constant):
-        node = ex.OpMul(a=node.b, b=node.a)
-    if not isinstance(node.a, ex.Constant):
-        return None
-    if isinstance(node.b, ex.OpUSub):
-        node = ex.OpMul(a=ex.OpUSub(node.a), b=node.b.a)
-    if not isinstance(node.b, ex.Function):
-        return None
-    if len(node.b.args) != 1:
-        return None
-    if not isinstance(node.b.args[0], ex.Constant):
-        return None
-    return ComponentModel(
-        name='linear',
-        params=frozendict(
-            factor=node.a.evaluate(),
-            edge_name=node.b.args[0].as_name(),
-            probe_type=node.b.name
-        )
-    )
-
-
 def split_behavioral_name_and_expr(expr: ex.ExprNode):
     if not isinstance(expr, ex.NamedValue):
         return None
     return expr.var_name, expr.node
+
+
+class LinearTerm:
+    def __init__(self, k: ex.ExprNode, element: CircuitVariable):
+        self.__k = k
+        self.__element = element
+
+    @property
+    def k(self):
+        return self.__k
+
+    @property
+    def element(self):
+        return self.__element
+
+    def __neg__(self):
+        return LinearTerm(
+            k=-self.k,
+            element=self.element
+        )
+
+    def __mul__(self, other):
+        if isinstance(other, float):
+            other = ex.Constant(other)
+        if not isinstance(other, ex.ExprNode):
+            return NotImplemented
+        return LinearTerm(
+            k=ex.OpMul(other, self.k).simplify(),
+            element=self.element
+        )
+
+    def __repr__(self):
+        var_name = self.element.to_expr_variable().name
+        k = self.k.simplify().evaluate_if_possible()
+        if k == 1:
+            k = ''
+        if isinstance(k, float):
+            k = f'{k:.6f}'
+        return f'{k!s:>8s} {var_name:>7s}'
+
+
+class LinearTerms:
+    @classmethod
+    def _coerce_to_list_of_terms(cls, obj) -> list[LinearTerm]:
+        if obj == 0:
+            return []
+
+        try:
+            it = iter(obj)
+        except TypeError:
+            if isinstance(obj, LinearTerms):
+                obj = list(obj.__terms)
+            elif isinstance(obj, LinearTerm):
+                obj = [obj]
+            else:
+                raise TypeError(obj)
+        else:
+            obj = list(it)
+
+        if isinstance(obj, list):
+            for elm in obj:
+                if not isinstance(elm, LinearTerm):
+                    raise TypeError(obj)
+        else:
+            raise TypeError(obj)
+
+        return obj
+
+    def __init__(self, terms):
+        self.__terms: list[LinearTerm] = self._coerce_to_list_of_terms(terms)
+
+    def __neg__(self):
+        return LinearTerms(map(operator.neg, self.__terms))
+
+    def __add__(self, other):
+        other = LinearTerms(other)
+        return LinearTerms(self.__terms + other.__terms)
+
+    @classmethod
+    def sum(cls, terms):
+        return LinearTerms([
+            term
+            for item in terms
+            for term in cls._coerce_to_list_of_terms(item)
+        ])
+
+    def __sub__(self, other):
+        other = LinearTerms(other)
+        return LinearTerms(self.__terms + (-other).__terms)
+
+    def __mul__(self, other):
+        return LinearTerms(term * other for term in self.__terms)
+
+    def __repr__(self):
+        if not self.__terms:
+            return '0'
+        return ' + '.join(map(str, self.__terms))
+
+    def __lshift__(self, other: list['LinearEquation']):
+        src_eqs, dst_terms = other, self
+
+        for src_eq in src_eqs:
+            if len(src_eq.left.__terms) != 1:
+                raise ValueError(other)
+
+        terms_lut: dict[CircuitVariable, LinearTerms] = {
+            src_eq.left.__terms[0].element: src_eq.right
+            for src_eq in src_eqs
+        }
+        assigned_terms = []
+        for dst_term in dst_terms.__terms:
+            assignment = terms_lut.get(dst_term.element)
+            if assignment:
+                new_terms = assignment * dst_term.k
+            else:
+                new_terms = LinearTerms(dst_term)
+            assigned_terms.append(new_terms)
+        return LinearTerms.sum(assigned_terms)
+
+
+@dataclass()
+class LinearEquation:
+    left: LinearTerms
+    right: LinearTerms
+
+    def __repr__(self):
+        return f'{self.left} = {self.right}'
+
+    def to_equation(self) -> 'LinearEquation':
+        return self
+
+    def __neg__(self):
+        return LinearEquation(
+            left=-self.left,
+            right=-self.right
+        )
+
+    def __add__(self, other):
+        if not isinstance(other, LinearEquation):
+            return NotImplemented
+        return LinearEquation(
+            left=self.left + other.left,
+            right=self.right + other.right
+        )
+
+    def __sub__(self, other):
+        if not isinstance(other, LinearEquation):
+            return NotImplemented
+        return LinearEquation(
+            left=self.left - other.left,
+            right=self.right - other.right
+        )
+
+    @classmethod
+    def from_left_and_right(cls, left, right):
+        return LinearEquation(
+            left=LinearTerms(left),
+            right=LinearTerms(right)
+        )
+
+    @classmethod
+    def from_left(cls, left):
+        return LinearEquation(
+            left=LinearTerms(left),
+            right=LinearTerms(0)
+        )
+
+    def __ilshift__(self, other):
+        if not isinstance(other, list):
+            return NotImplemented
+        for item in other:
+            if not isinstance(item, LinearEquation):
+                return NotImplemented
+        self.right = self.right << other
 
 
 class NetList(NamedTuple):
@@ -183,44 +362,61 @@ class NetList(NamedTuple):
                     lst.append(nnp)
         return lst
 
-    def ohms_law(self) -> dict[EdgeCurrent, tuple[EdgeVoltage, ex.ExprNode]]:
-        dct = {}
-        for edge in self.edges:
-            if edge.component.conductance is None:
-                continue
-            dct[EdgeCurrent(edge)] = EdgeVoltage(edge), edge.component.conductance
-        return dct
+    def ohms_law(self) -> list[LinearEquation]:
+        # -> dict[EdgeCurrent, tuple[EdgeVoltage, ex.ExprNode]]:
+        # i = Gv
+        eqs = [
+            LinearEquation.from_left_and_right(
+                left=EdgeCurrent(edge).term(),
+                right=EdgeVoltage(edge).term(edge.component.conductance)
+            )
+            for edge in self.edges
+            if edge.component.conductance is not None
+        ]
+        return eqs
 
-    def kcl(self) -> dict[Node, list[tuple[EdgeCurrent, ex.ExprNode]]]:
-        dct = {}
+    def kcl(self) -> list[LinearEquation]:
+        #  -> dict[Node, list[tuple[EdgeCurrent, ex.ExprNode]]]:
+        # i_1 + i_2 + ... + i_n = 0
+        eqs = []
         for node in self.nodes:
             nnp_with_node = self.ports_with_node(node)
-            cfs = [nnp.component.current_flow(nnp.port_name) for nnp in nnp_with_node]
-            dct[node] = []
-            for nnp, cf in zip(nnp_with_node, cfs):
-                dct[node].append((EdgeCurrent(Edge(nnp.component)), ex.Constant(cf.value)))
-        return dct
+            cfs = [
+                nnp.component.current_flow(nnp.port_name)
+                for nnp in nnp_with_node
+            ]  # current flows
+            eq = LinearEquation.from_left([
+                EdgeCurrent(Edge(nnp.component)).term(ex.Constant(cf.value))
+                for nnp, cf in zip(nnp_with_node, cfs)
+            ])
+            eqs.append(eq)
 
-    def kvl(self) -> dict[EdgeVoltage, dict[NodePotential, ex.ExprNode]]:
-        dct = {}
+        return eqs
+
+    def kvl(self) -> list[LinearEquation]:
+        # -> dict[EdgeVoltage, dict[NodePotential, ex.ExprNode]]:
+        # v = e_high - e_low
+        eqs = []
         for edge in self.edges:
             node_high = edge.component.port_to_node[edge.component.clazz.port_high]
             node_low = edge.component.port_to_node[edge.component.clazz.port_low]
-            dct[EdgeVoltage(edge)] = {}
-            for node, sign in zip([node_high, node_low], [ex.POS_ONE, ex.NEG_ONE]):
-                dct[EdgeVoltage(edge)][NodePotential(node)] = sign
-        return dct
+            eq = LinearEquation.from_left_and_right(
+                left=EdgeVoltage(edge).term(),
+                right=[
+                    NodePotential(node).term(sign)
+                    for node, sign in zip([node_high, node_low], [ex.POS_ONE, ex.NEG_ONE])
+                ]
+            )
+            eqs.append(eq)
+        return eqs
 
-    def node_potential_substituted_ohms_law(self) \
-            -> dict[EdgeCurrent, list[tuple[NodePotential, ex.ExprNode]]]:
+    def node_potential_substituted_ohms_law(self) -> list[LinearEquation]:
+        # -> dict[EdgeCurrent, list[tuple[NodePotential, ex.ExprNode]]]:
         ohm = self.ohms_law()
         kvl = self.kvl()
 
-        for edge_current, (edge_voltage, g) in list(ohm.items()):
-            ohm[edge_current] = []
-            for node_potential, sign in kvl[edge_voltage].items():
-                ohm[edge_current].append((node_potential, sign * g))
-            ohm[edge_current] = tuple(ohm[edge_current])
+        for ohm_eq in ohm:
+            ohm_eq <<= kvl
 
         return ohm
 

@@ -1,13 +1,27 @@
 from frozendict import frozendict
 import ast
 import re
+from typing import TypeVar
 from dataclasses import dataclass
+
+EVAL_DEFAULT_SELF = object()
+
+T = TypeVar('T')
 
 
 @dataclass(frozen=True)
 class ExprNode:
     def evaluate(self) -> float:
         raise NotImplementedError()
+
+    def evaluate_if_possible(self, default=EVAL_DEFAULT_SELF):
+        try:
+            return self.evaluate()
+        except NotImplementedError:
+            if default == EVAL_DEFAULT_SELF:
+                return self
+            else:
+                return default
 
     def children(self):
         raise NotImplementedError()
