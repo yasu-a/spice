@@ -1,0 +1,7 @@
+* C:\Users\yasuh\Documents\LTspiceXVII\Draft53.asc
+B1 2 0 I=1n*(exp(v(2)/26m)-1)
+R1 1 2 1000
+V1 1 0 1
+.op
+.backanno
+.end
