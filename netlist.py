@@ -1,3 +1,5 @@
+from pprint import pprint
+
 from typing import NamedTuple, TYPE_CHECKING
 
 import circuit_equation as ceq
@@ -79,11 +81,10 @@ class NetList(NamedTuple):
         return lst
 
     def ohm(self) -> ceq.LinearEquationSet:
-        # -> dict[EdgeCurrent, tuple[EdgeVoltage, ex.ExprNode]]:
         # i = Gv
         eqs = ceq.LinearEquationSet(
             ceq.LinearEquation.from_left_and_right(
-                left=ceq.EdgeCurrent(edge).term(),
+                left=ceq.EdgeCurrent(edge),
                 right=ceq.EdgeVoltage(edge).term(edge.component.conductance)
             )
             for edge in self.edges
@@ -95,7 +96,6 @@ class NetList(NamedTuple):
         return eqs
 
     def kcl(self) -> ceq.LinearEquationSet:
-        #  -> dict[Node, list[tuple[EdgeCurrent, ex.ExprNode]]]:
         # i_1 + i_2 + ... + i_n = 0
         eqs = ceq.LinearEquationSet()
         for node in self.nodes:
@@ -115,14 +115,13 @@ class NetList(NamedTuple):
         return eqs
 
     def kvl(self) -> ceq.LinearEquationSet:
-        # -> dict[EdgeVoltage, dict[NodePotential, ex.ExprNode]]:
         # v = e_high - e_low
         eqs = ceq.LinearEquationSet()
         for edge in self.edges:
             node_high = edge.component.port_to_node[edge.component.clazz.port_high]
             node_low = edge.component.port_to_node[edge.component.clazz.port_low]
             eq = ceq.LinearEquation.from_left_and_right(
-                left=ceq.EdgeVoltage(edge).term(),
+                left=ceq.EdgeVoltage(edge),
                 right=[
                     ceq.NodePotential(node).term(sign)
                     for node, sign in zip([node_high, node_low], [ex.POS_ONE, ex.NEG_ONE])
@@ -135,7 +134,6 @@ class NetList(NamedTuple):
         return eqs
 
     def node_potential_substituted_ohm(self) -> ceq.LinearEquationSet:
-        # -> dict[EdgeCurrent, list[tuple[NodePotential, ex.ExprNode]]]:
         # i = G e_high - G e_low
         ohm = self.ohm()
         kvl = self.kvl()
@@ -147,7 +145,6 @@ class NetList(NamedTuple):
         return ohm
 
     def substituted_kcl(self) -> ceq.LinearEquationSet:
-        # -> dict[Node, tuple[ceq.Variable, ex.ExprNode]]:
         # Ge = 0
         ohm = self.node_potential_substituted_ohm()
         kcl = self.kcl()
@@ -158,37 +155,38 @@ class NetList(NamedTuple):
 
         return kcl
 
-    def expressions_for_voltage(self) -> dict[ceq.EdgeVoltage, ex.ExprNode]:
-        dct = {}
-        for edge in self.edges:
-            if edge.component.constant_voltage is None:
-                continue
-            dct[ceq.EdgeVoltage(edge)] = edge.component.constant_voltage
-        return dct
+    def expressions_for_current(self) -> ceq.LinearEquationSet:
+        # i = const.
+        return ceq.LinearEquationSet(
+            ceq.LinearEquation.from_left_and_right(
+                left=ceq.EdgeCurrent(edge),
+                right=edge.component.constant_current
+            )
+            for edge in self.edges
+            if edge.component.constant_current is not None
+        )
 
-    def expressions_for_potential(self) \
-            -> dict[
-                ceq.EdgeVoltage, tuple[list[tuple[ceq.NodePotential, ex.ExprNode]], ex.ExprNode]]:
+    def expressions_for_voltage(self) -> ceq.LinearEquationSet:
+        # v = const.
+        return ceq.LinearEquationSet(
+            ceq.LinearEquation.from_left_and_right(
+                left=ceq.EdgeVoltage(edge),
+                right=edge.component.constant_voltage
+            )
+            for edge in self.edges
+            if edge.component.constant_voltage is not None
+        )
+
+    def expressions_for_potential(self) -> ceq.LinearEquationSet:
+        # e_high -  e_low = const.
         expr_vol = self.expressions_for_voltage()
         kvl = self.kvl()
 
-        for edge_voltage, expr in list(expr_vol.items()):
-            expr_vol[edge_voltage] = []
-            for node_potential, sign in kvl[edge_voltage].items():
-                expr_vol[edge_voltage].append((node_potential, sign))
-            expr_vol[edge_voltage] = expr_vol[edge_voltage], expr
+        expr_vol <<= kvl
 
-        expr_vol[None] = [(NodePotential(Node('0')), ex.POS_ONE)], ex.ZERO
+        assert expr_vol.check_type(), expr_vol
 
         return expr_vol
-
-    def expressions_for_current(self) -> dict[ceq.EdgeCurrent, ex.ExprNode]:
-        dct = {}
-        for edge in self.edges:
-            if edge.component.constant_current is None:
-                continue
-            dct[ceq.EdgeCurrent(edge)] = edge.component.constant_current
-        return dct
 
     def _parse_variable_to_expr(self, variable, record):
         if isinstance(variable, ceq.EdgeCurrent):
@@ -200,10 +198,26 @@ class NetList(NamedTuple):
         record[variable] = result
         return result
 
-    def total_equations(self, var_record=None) \
-            -> dict[Node | ceq.EdgeVoltage | ceq.EdgeCurrent, tuple[ex.ExprNode, ex.ExprNode]]:
+    def var_name_lookup(self):
+        objects: list[ceq.Variable] = [ceq.EdgeVoltage(edge) for edge in self.edges] \
+                                      + [ceq.EdgeCurrent(edge) for edge in self.edges] \
+                                      + [ceq.NodePotential(node) for node in self.nodes]
+
+        # TODO: lookup like 'V(R1)' -> '_v_r1'
+        return {_: obj.to_expr() for obj in objects}
+
+    def total_equations(self, var_record=None) -> ceq.LinearEquationSet:
+        # -> dict[Node | ceq.EdgeVoltage | ceq.EdgeCurrent, tuple[ex.ExprNode, ex.ExprNode]]:
         var_record = var_record or {}
         dct = {}
+
+        eqs = ceq.LinearEquationSet()
+
+        pprint(self.var_name_lookup())
+
+        kcl = self.substituted_kcl()
+        kcl.split_vars_and_const()
+        pprint(kcl.to_python(self.var_name_lookup()))
 
         for node, terms in self.substituted_kcl().items():
             total_expr = None

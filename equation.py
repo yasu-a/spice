@@ -38,8 +38,12 @@ class Variable(NameGettable, ABC):
     def _suffix(cls):
         raise NotImplementedError()
 
+    @property
+    def var_name(self):
+        return f'_{self._suffix()}_{self.name.lower()}'
+
     def to_expr(self):
-        return ex.Variable(name=f'_{self._suffix()}_{self.name.lower()}')
+        return ex.Variable(name=self.var_name)
 
     def term(self, k=None):
         if k is None:
@@ -47,10 +51,42 @@ class Variable(NameGettable, ABC):
         return LinearTerm(k=k, element=self)
 
 
+@dataclass(frozen=True)
+class ConstVariable(Variable):
+    @classmethod
+    def _name_source(cls) -> str:
+        raise ValueError('constant variable has no name source')
+
+    @property
+    def name(self):
+        raise ValueError('constant variable has no name')
+
+    @property
+    def var_name(self):
+        return f'cst.'
+
+    @classmethod
+    def _suffix(cls):
+        raise ValueError('constant variable has no suffix')
+
+    def to_expr(self):
+        return ex.POS_ONE
+
+    def __repr__(self):
+        return f'cst.'
+
+
+VAR_CONST = ConstVariable()
+
+
 class LinearTerm:
     def __init__(self, k: ex.ExprNode, element: Variable):
         self.__k = k
         self.__element = element
+
+    @classmethod
+    def const(cls, k: ex.ExprNode):
+        return cls(k=k, element=VAR_CONST)
 
     @property
     def k(self):
@@ -77,13 +113,15 @@ class LinearTerm:
         )
 
     def __repr__(self):
-        var_name = self.element.to_expr().name
         k = self.k.simplify().evaluate_if_possible()
         if k == 1:
             k = ''
         if isinstance(k, float):
             k = f'{k:.6f}'
-        return f'{k!s:>9s} {var_name:>7s}'
+        return f'{k!s:>9s} {self.element.var_name!s:>7s}'
+
+    def is_const(self):
+        return self.element == VAR_CONST
 
 
 class LinearTerms:
@@ -97,6 +135,10 @@ class LinearTerms:
         except TypeError:
             if isinstance(obj, LinearTerms):
                 obj = list(obj.__terms)
+            elif isinstance(obj, Variable):
+                obj = [obj.term()]
+            elif isinstance(obj, ex.ExprNode):
+                obj = [LinearTerm.const(obj)]
             elif isinstance(obj, LinearTerm):
                 obj = [obj]
             else:
@@ -176,6 +218,16 @@ class LinearTerms:
             result.append(new_terms)
         return LinearTerms.sum(result)
 
+    def split_vars_and_const(self):
+        var_side = []
+        const_side = []
+        for term in self.__terms:
+            if term.is_const():
+                const_side.append(term)
+            else:
+                var_side.append(term)
+        return LinearTerms(var_side), LinearTerms(const_side)
+
 
 @dataclass()
 class LinearEquation:
@@ -185,8 +237,13 @@ class LinearEquation:
     def __repr__(self):
         return f'{self.left} = {self.right}'
 
-    def to_equation(self) -> 'LinearEquation':
-        return self
+    def split_vars_and_const(self) -> 'LinearEquation':
+        left_vars, left_consts = self.left.split_vars_and_const()
+        right_vars, right_consts = self.right.split_vars_and_const()
+        return LinearEquation.from_left_and_right(
+            left=left_vars - right_vars,
+            right=-left_consts + right_consts
+        )
 
     def var_to_formula(self) -> tuple[Variable, LinearTerms]:
         if not self.left.single:
@@ -242,6 +299,10 @@ class LinearEquation:
 class LinearEquationSet(list[LinearEquation]):
     def var_to_formula(self) -> dict[Variable, LinearTerms]:
         return dict(map(LinearEquation.var_to_formula, self))
+
+    def split_vars_and_const(self):
+        for i, item in enumerate(self):
+            self[i] = item.split_vars_and_const()
 
     def check_type(self):
         for item in self:

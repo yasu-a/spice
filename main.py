@@ -70,8 +70,6 @@ def main():
     print('\nnetlist.substituted_kcl')
     pprint(netlist.substituted_kcl())
 
-    return
-
     print('\nnetlist.expressions_for_potential')
     pprint(netlist.expressions_for_potential())
 
@@ -80,6 +78,8 @@ def main():
 
     print('\nnetlist.total_equations')
     pprint(netlist.total_equations())
+
+    return
 
     print()
     dct, rec = netlist.total_equations()

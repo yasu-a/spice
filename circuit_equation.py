@@ -13,7 +13,7 @@ class CircuitVariable(Variable, ABC):
     def _suffix(cls):
         raise NotImplementedError()
 
-    def to_expr_variable(self):
+    def to_expr(self):
         return ex.Variable(name=f'_{self._suffix()}_{self.name.lower()}')
 
     def term(self, k=None):
