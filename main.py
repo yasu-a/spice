@@ -56,7 +56,7 @@ def main():
     pprint(netlist.components)
 
     print('\nnetlist.ohms_law')
-    pprint(netlist.ohms_law())
+    pprint(netlist.ohm())
 
     print('\nnetlist.kcl')
     pprint(netlist.kcl())
@@ -65,12 +65,12 @@ def main():
     pprint(netlist.kvl())
 
     print('\nnetlist.node_potential_substituted_ohms_law')
-    pprint(netlist.node_potential_substituted_ohms_law())
-
-    return
+    pprint(netlist.node_potential_substituted_ohm())
 
     print('\nnetlist.substituted_kcl')
     pprint(netlist.substituted_kcl())
+
+    return
 
     print('\nnetlist.expressions_for_potential')
     pprint(netlist.expressions_for_potential())
