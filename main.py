@@ -89,14 +89,15 @@ def main():
     f, x_names = netlist.python_func_to_solve()
     from scipy.optimize import root
     x0 = np.zeros_like(x_names, dtype=np.float64)
-    optimize_result = root(f, x0)
+    optimize_result = root(f, x0, method='hybr')
     assert optimize_result.success, optimize_result
     x = optimize_result.x
     print(x)
 
     def float_to_string(v):
+        sign, v = v / abs(v), abs(v)
+
         dct = dict([
-            ('zero', 1e-18),
             ('f', 1e-15),
             ('p', 1e-12),
             ('n', 1e-9),
@@ -109,19 +110,21 @@ def main():
             ('T', 1e+12),
         ])
 
-        u = ' '
-        for unit, scale in dct.items():
-            if v < scale * 1e+3:
-                if unit == 'zero':
-                    v = 0
-                elif unit == '_':
-                    break
-                else:
-                    v /= scale
-                    u = unit
-                    break
+        if v < 1e-17:
+            u = ' '
+            sign, v = 0, 0
+        else:
+            u = ' '
+            for unit, scale in dct.items():
+                if v < scale * 1e+3 * 0.9:
+                    if unit == '_':
+                        break
+                    else:
+                        v /= scale
+                        u = unit
+                        break
 
-        return f'{v:9.3f} {u}'
+        return f'{sign * v:9.3f} {u}'
 
     for n, v in zip(x_names, x):
         print(f'{n:<10s} {float_to_string(v)}')
