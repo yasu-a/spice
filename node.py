@@ -21,5 +21,5 @@ class Node:
         return self.name == other.name
 
     @property
-    def is_ground(self):
+    def is_grounded(self):
         return self.name == '0'

@@ -1,6 +1,9 @@
+import itertools
+import re
+
 from pprint import pprint
 
-from typing import NamedTuple, TYPE_CHECKING
+from typing import NamedTuple, TYPE_CHECKING, Callable
 
 import circuit_equation as ceq
 import expression as ex
@@ -10,6 +13,7 @@ from node import Node
 if TYPE_CHECKING:
     from comcls import ComponentClassSet
     from comins import ComponentInstance, NodePortPair
+    import numpy as np
 
 
 def split_behavioral_name_and_expr(expr: ex.ExprNode):
@@ -184,6 +188,15 @@ class NetList(NamedTuple):
 
         expr_vol <<= kvl
 
+        for node in self.nodes:
+            if node.is_grounded:
+                expr_vol.append(
+                    ceq.LinearEquation.from_left_and_right(
+                        left=ceq.NodePotential(node),
+                        right=0
+                    )
+                )
+
         assert expr_vol.check_type(), expr_vol
 
         return expr_vol
@@ -198,72 +211,92 @@ class NetList(NamedTuple):
         record[variable] = result
         return result
 
-    def var_name_lookup(self):
-        objects: list[ceq.Variable] = [ceq.EdgeVoltage(edge) for edge in self.edges] \
-                                      + [ceq.EdgeCurrent(edge) for edge in self.edges] \
-                                      + [ceq.NodePotential(node) for node in self.nodes]
-
-        # TODO: lookup like 'V(R1)' -> '_v_r1'
-        return {_: obj.to_expr() for obj in objects}
-
-    def total_equations(self, var_record=None) -> ceq.LinearEquationSet:
+    def total_equations(self) -> ceq.LinearEquationSet:
         # -> dict[Node | ceq.EdgeVoltage | ceq.EdgeCurrent, tuple[ex.ExprNode, ex.ExprNode]]:
-        var_record = var_record or {}
-        dct = {}
-
         eqs = ceq.LinearEquationSet()
 
-        pprint(self.var_name_lookup())
-
         kcl = self.substituted_kcl()
-        kcl.split_vars_and_const()
-        pprint(kcl.to_python(self.var_name_lookup()))
+        kcl.pop(0)  # eliminate one of kcl
+        eqs += kcl
 
-        for node, terms in self.substituted_kcl().items():
-            total_expr = None
-            for var, expr in terms:
-                var = self._parse_variable_to_expr(var, record=var_record)
-                expr = expr * var
-                if total_expr is None:
-                    total_expr = expr
-                else:
-                    total_expr = ex.OpAdd(total_expr, expr)
-            dct[node] = total_expr.simplify(), ex.ZERO.simplify()
-        dct.popitem()  # eliminate one of kcl
+        const_e = self.expressions_for_potential()
+        eqs += const_e
 
-        for edge_voltage, (terms, edge_voltage_given) in self.expressions_for_potential().items():
-            total_expr = None
-            for var, expr in terms:
-                var = self._parse_variable_to_expr(var, record=var_record)
-                expr = expr * var
-                if total_expr is None:
-                    total_expr = expr
-                else:
-                    total_expr = ex.OpAdd(total_expr, expr)
-            dct[edge_voltage] = total_expr.simplify(), edge_voltage_given.simplify()
+        const_i = self.expressions_for_current()
+        eqs += const_i
 
-        # dict[EdgeCurrent, ex.ExprNode]
-        for edge_current, edge_current_given in self.expressions_for_current().items():
-            var = self._parse_variable_to_expr(edge_current, record=var_record)
-            dct[edge_current] = var.simplify(), edge_current_given.simplify()
+        return eqs
 
-        return dct, var_record
-
-    def node_potential_substituted_ohms_law_equations(self, var_record=None) \
-            -> dict[ceq.EdgeCurrent, tuple[ex.ExprNode, ex.ExprNode]]:
+    def node_potential_substituted_ohms_law_equations(self, var_record=None):
         ohm = self.node_potential_substituted_ohm()
-        var_record = var_record or {}
-        dct = {}
-        for edge_current, terms in ohm.items():
-            total_expr = None
-            for var, expr in terms:
-                var = self._parse_variable_to_expr(var, record=var_record)
-                expr = expr * var
-                if total_expr is None:
-                    total_expr = expr
-                else:
-                    total_expr = ex.OpAdd(total_expr, expr)
-            edge_current_var = self._parse_variable_to_expr(edge_current, record=var_record)
-            dct[edge_current] = edge_current_var.simplify(), total_expr.simplify()
+        ohm <<= self.expressions_for_voltage()
+        return ohm
 
-        return dct, var_record
+    def name_to_circuit_var_mapping(self) -> dict[str, ceq.CircuitVariable]:
+        def iter_objects():
+            yield from map(ceq.EdgeVoltage, self.edges)
+            yield from map(ceq.EdgeCurrent, self.edges)
+            yield from map(ceq.NodePotential, self.nodes)
+
+        return dict(
+            obj.name_to_circuit_var_mapping_entry()
+            for obj in iter_objects()
+        )
+
+    def _replace_equation_probes(self, eqs: list[str]) -> list[str]:
+        mapping = self.name_to_circuit_var_mapping()
+        pprint(mapping)
+
+        def replace(formula: str):
+            def repl(m):
+                if m[1].startswith('_v_'):
+                    if m[2] in (node.name for node in self.nodes):
+                        return '_e_' + m[2].lower()
+                return m[1].lower()
+
+            return re.sub(r'__probe(_[iv]_([\w\d_]+))', repl, formula)
+
+        return [replace(formula) for formula in eqs]
+
+    def python_equations_and_variable_names(self) -> tuple[list[str], list[str]]:
+        eqs = self._replace_equation_probes(
+            self.total_equations().to_python()
+        )
+        print(len(eqs))
+
+        variable_names = sorted({
+            x for eq in eqs for x in re.findall(r'_[ive]_[\w\d]+', eq)
+        })
+
+        additional_ohms = self.node_potential_substituted_ohms_law_equations()
+        pprint([eq.left.first.element.var_name for eq in additional_ohms])
+        additional_eqs = ceq.LinearEquationSet(
+            eq
+            for eq in additional_ohms
+            if eq.left.first.element.var_name in variable_names
+        )
+        pprint(additional_eqs)
+        eqs += additional_eqs.to_python()
+
+        assert len(eqs) == len(variable_names), (len(eqs), len(variable_names), variable_names)
+
+        return eqs, variable_names
+
+    def python_func_to_solve(self) -> tuple[Callable[['np.ndarray'], 'np.ndarray'], list]:
+        formulas, x_names = self.python_equations_and_variable_names()
+
+        array_assigned_x_names = {x_name: f'_x[{i}]' for i, x_name in enumerate(x_names)}
+
+        for i in range(len(formulas)):
+            for k, v in array_assigned_x_names.items():
+                formulas[i] = formulas[i].replace(k, v)
+
+        f_lst_expr = '[' + ', '.join(f for f in formulas) + ']'
+        f_expr = f'_f_placeholder[0] = lambda _x: {f_lst_expr}'
+        f_expr_compiled = compile(f_expr, f'__eqs__', mode='exec')
+        _f_placeholder = {}
+        exec(f_expr_compiled, dict(_f_placeholder=_f_placeholder))
+        f = _f_placeholder[0]
+        assert callable(f), f
+
+        return f, x_names

@@ -1,4 +1,6 @@
+import decimal
 import itertools
+import math
 from builtins import dict
 
 import numpy as np
@@ -46,7 +48,7 @@ def main():
         )
     )
 
-    with open('sample1.cir', 'r') as f:
+    with open('sample2.cir', 'r') as f:
         netlist = NetList.from_string(
             source=f.read(),
             class_set=class_set
@@ -78,6 +80,51 @@ def main():
 
     print('\nnetlist.total_equations')
     pprint(netlist.total_equations())
+
+    eqs, x_names = netlist.python_equations_and_variable_names()
+    for eq in eqs:
+        print(eq, '=', 0)
+    print(x_names)
+
+    f, x_names = netlist.python_func_to_solve()
+    from scipy.optimize import root
+    x0 = np.zeros_like(x_names, dtype=np.float64)
+    optimize_result = root(f, x0)
+    assert optimize_result.success, optimize_result
+    x = optimize_result.x
+    print(x)
+
+    def float_to_string(v):
+        dct = dict([
+            ('zero', 1e-18),
+            ('f', 1e-15),
+            ('p', 1e-12),
+            ('n', 1e-9),
+            ('u', 1e-6),
+            ('m', 1e-3),
+            ('_', 1e+0),
+            ('K', 1e+3),
+            ('M', 1e+6),
+            ('G', 1e+9),
+            ('T', 1e+12),
+        ])
+
+        u = ' '
+        for unit, scale in dct.items():
+            if v < scale * 1e+3:
+                if unit == 'zero':
+                    v = 0
+                elif unit == '_':
+                    break
+                else:
+                    v /= scale
+                    u = unit
+                    break
+
+        return f'{v:9.3f} {u}'
+
+    for n, v in zip(x_names, x):
+        print(f'{n:<10s} {float_to_string(v)}')
 
     return
 

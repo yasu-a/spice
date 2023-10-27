@@ -16,6 +16,9 @@ class CircuitVariable(Variable, ABC):
     def to_expr(self):
         return ex.Variable(name=f'_{self._suffix()}_{self.name.lower()}')
 
+    def name_to_circuit_var_mapping_entry(self) -> tuple[str, 'CircuitVariable']:
+        return self.var_name, self
+
     def term(self, k=None):
         if k is None:
             k = ex.POS_ONE
@@ -23,7 +26,7 @@ class CircuitVariable(Variable, ABC):
 
 
 @dataclass(frozen=True)
-class EdgeVariable(Variable, ABC):
+class EdgeVariable(CircuitVariable, ABC):
     edge: 'Edge'
 
     @property
@@ -58,7 +61,7 @@ class EdgeVoltage(EdgeVariable):
 
 
 @dataclass(frozen=True)
-class NodeVariable(Variable, ABC):
+class NodeVariable(CircuitVariable, ABC):
     node: 'Node'
 
     @property

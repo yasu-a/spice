@@ -194,23 +194,13 @@ class Probe(Variable):
 @dataclass(frozen=True)
 class VoltageProbe(Probe):
     def to_python(self, ctx) -> str:
-        var_record = ctx['var_record']
-        for k, v in var_record.items():
-            # FIXME!: check type with `isinstance`
-            if type(k).__name__.startswith('NodePotential') and k.name == self.name:
-                return v.name
-        assert False, ctx
+        return f'__probe_v_{self.name}'
 
 
 @dataclass(frozen=True)
 class CurrentProbe(Probe):
     def to_python(self, ctx) -> str:
-        for k, (var, expr) in ctx['edge_currents'].items():
-            # FIXME!: check type with `isinstance`
-            if type(k).__name__.startswith('EdgeCurrent') and k.name == self.name:
-                ctx['used_edge_currents'][k] = expr, var
-                return var.name
-        assert False, ctx
+        return f'__probe_i_{self.name}'
 
 
 @dataclass(frozen=True)

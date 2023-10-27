@@ -1,4 +1,5 @@
 import operator
+import re
 from abc import ABC
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -42,7 +43,7 @@ class Variable(NameGettable, ABC):
     def var_name(self):
         return f'_{self._suffix()}_{self.name.lower()}'
 
-    def to_expr(self):
+    def to_expr(self) -> ex.Variable:
         return ex.Variable(name=self.var_name)
 
     def term(self, k=None):
@@ -117,11 +118,17 @@ class LinearTerm:
         if k == 1:
             k = ''
         if isinstance(k, float):
-            k = f'{k:.6f}'
+            if k < 1e-6 and k != 0:
+                k = f'{k:.3g}'
+            else:
+                k = f'{k:.6f}'
         return f'{k!s:>9s} {self.element.var_name!s:>7s}'
 
     def is_const(self):
         return self.element == VAR_CONST
+
+    def to_expr(self) -> ex.ExprNode:
+        return ex.OpMul(a=self.k, b=self.element.to_expr())
 
 
 class LinearTerms:
@@ -218,15 +225,25 @@ class LinearTerms:
             result.append(new_terms)
         return LinearTerms.sum(result)
 
-    def split_vars_and_const(self):
-        var_side = []
-        const_side = []
+    # def split_vars_and_const(self):
+    #     var_side = []
+    #     const_side = []
+    #     for term in self.__terms:
+    #         if term.is_const():
+    #             const_side.append(term)
+    #         else:
+    #             var_side.append(term)
+    #     return LinearTerms(var_side), LinearTerms(const_side)
+
+    def to_expr(self) -> ex.ExprNode:
+        result = None
         for term in self.__terms:
-            if term.is_const():
-                const_side.append(term)
+            item = term.to_expr()
+            if result is None:
+                result = item
             else:
-                var_side.append(term)
-        return LinearTerms(var_side), LinearTerms(const_side)
+                result = ex.OpAdd(result, item)
+        return (result or ex.ZERO).simplify()
 
 
 @dataclass()
@@ -237,12 +254,18 @@ class LinearEquation:
     def __repr__(self):
         return f'{self.left} = {self.right}'
 
-    def split_vars_and_const(self) -> 'LinearEquation':
-        left_vars, left_consts = self.left.split_vars_and_const()
-        right_vars, right_consts = self.right.split_vars_and_const()
+    # def split_vars_and_const(self) -> 'LinearEquation':
+    #     left_vars, left_consts = self.left.split_vars_and_const()
+    #     right_vars, right_consts = self.right.split_vars_and_const()
+    #     return LinearEquation.from_left_and_right(
+    #         left=left_vars - right_vars,
+    #         right=-left_consts + right_consts
+    #     )
+
+    def to_left_hand_formula(self):
         return LinearEquation.from_left_and_right(
-            left=left_vars - right_vars,
-            right=-left_consts + right_consts
+            left=self.left - self.right,
+            right=0
         )
 
     def var_to_formula(self) -> tuple[Variable, LinearTerms]:
@@ -276,6 +299,12 @@ class LinearEquation:
             right=self.right - other.right
         )
 
+    # def to_expr(self) -> tuple[ex.ExprNode, ex.ExprNode]:
+    #     return self.left.to_expr(), self.right.to_expr()
+
+    def to_python(self) -> str:
+        return self.to_left_hand_formula().left.to_expr().to_python(None)
+
     @classmethod
     def from_left_and_right(cls, left, right):
         return LinearEquation(
@@ -300,9 +329,14 @@ class LinearEquationSet(list[LinearEquation]):
     def var_to_formula(self) -> dict[Variable, LinearTerms]:
         return dict(map(LinearEquation.var_to_formula, self))
 
-    def split_vars_and_const(self):
-        for i, item in enumerate(self):
-            self[i] = item.split_vars_and_const()
+    # def split_vars_and_const(self):
+    #     return LinearEquationSet(eq.split_vars_and_const() for eq in self)
+
+    def to_left_hand_formula(self):
+        return LinearEquationSet(eq.to_left_hand_formula() for eq in self)
+
+    def to_python(self) -> list[str]:  # left-formula and right-formula
+        return [eq.to_python() for eq in self]
 
     def check_type(self):
         for item in self:
